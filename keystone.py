@@ -4,11 +4,6 @@ import sys, signal, sqlite3, time, os, threading
 from keystoneclient.v2_0 import client
 from keystoneclient.openstack.common.apiclient.exceptions import AuthorizationFailure
 
-AUTH_URL = 'http://controller:35357/v2.0'
-USER = 'admin'
-PASSWORD = 'iep9Teig'
-TENANT = 'admin'
-
 DATABASE_BASE = 'tests.sqlite'
 DATABASE_SUFFIX = 'db'
 
@@ -28,10 +23,19 @@ def log(string):
     import datetime
     timestring = datetime.datetime.fromtimestamp(time.time()).strftime('%d.%m.%Y %H:%M:%S')
     print "%s: %s" % (timestring, string)
+    sys.stdout.flush()
 
 def main(argv):
-    l = LoadGenerator()
+    if len(argv) != 1:
+        log("Need one argument: keystone host to connect to.")
+        sys.exit(1)
+    host = argv[0]
     
+    klass = KeystoneUserList
+    #klass = KeystoneAuthAndUserList
+    l = klass(host)
+    
+    log("Running against %s" % l.auth_url)
     log("Starting worker threads...")
     l.create_production_worker()
     for _ in range(NUM_WORKERS):
@@ -87,6 +91,11 @@ class DatabaseConnection(object):
 class LoadGenerator(object):
 
     def __init__(self):
+        if self.commit_query is None:
+            raise Exception("Need non-abstract subclass with commit_query attribute!")
+        if self.create_query is None:
+            raise Exception("Need non-abstract subclass with create_query attribute!")
+        
         # Use a non-existing database-file
         self.database_name = DATABASE_BASE
         i = 0
@@ -99,7 +108,7 @@ class LoadGenerator(object):
         
         # Create table for our measurements
         with self.connection(description="creating table", fatal=True) as c:
-            c.execute('''create table keystone (start integer, authentication_time integer, request_time integer, error text);''')
+            c.execute(self.create_query)
         
         # Collection of data, shared array guarded by lock
         self.results = []
@@ -150,34 +159,14 @@ class LoadGenerator(object):
         if len(values) > 0:
             with self.connection(description="updating values") as c:
                 log("Committing %i results" % len(values))
-                c.executemany('''insert into keystone values (?, ?, ?, ?);''', values)
-    
-    def execute_request(self):
-        error = None
-        authenticationTime = 0
-        requestTime = 0
-        try:
-            start = time.time()
-            keystone = client.Client(auth_url=AUTH_URL, \
-                           username=USER, password=PASSWORD, tenant_name=TENANT)
-            authenticated = time.time()
-            authenticationTime = authenticated - start
-            keystone.users.list()
-            end = time.time()
-            requestTime = end - authenticated
-            self.last_request_end = end
-        except AuthorizationFailure, f:
-            error = "AuthorizationFailure: %s" % f
-        except Exception, e:
-            error = "Exception: %s" %e
-        finally:
-            self.record_results((start, authenticationTime, requestTime, error))
+                c.executemany(self.commit_query, values)
     
     def execution_worker(self):
         while self.workers_running:
             self.request_semaphore.acquire()
             if self.workers_running:
                 self.execute_request()
+                self.last_request_end = time.time()
     
     def create_execution_worker(self):
         thread = threading.Thread(target = self.execution_worker)
@@ -208,7 +197,66 @@ class LoadGenerator(object):
     def stop_running(self):
         log("Stopping workers...")
         self.workers_running = False
+   
+class KeystoneLoadGenerator(LoadGenerator):
+    AUTH_URL_PATTERN = 'http://%s:35357/v2.0'
+    user = 'admin'
+    password = 'iep9Teig'
+    tenant = 'admin'
     
+    def __init__(self, auth_host):
+        super(KeystoneLoadGenerator, self).__init__()
+        self.auth_url = self.AUTH_URL_PATTERN % auth_host
+    
+    def create_keystone_session(self):
+        return client.Client(auth_url=self.auth_url, \
+               username=self.user, password=self.password, tenant_name=self.tenant)
+
+class KeystoneAuthAndUserList(KeystoneLoadGenerator):
+    create_query = "create table keystone (start integer, authentication_time integer, request_time integer, error text);"
+    commit_query = "insert into keystone values (?, ?, ?, ?);"
+    def execute_request(self):
+        error = None
+        authenticationTime = 0
+        requestTime = 0
+        try:
+            start = time.time()
+            keystone = self.create_keystone_session()
+            authenticated = time.time()
+            authenticationTime = authenticated - start
+            keystone.users.list()
+            end = time.time()
+            requestTime = end - authenticated
+        except AuthorizationFailure, f:
+            error = "AuthorizationFailure: %s" % f
+        except Exception, e:
+            error = "Exception: %s" %e
+        finally:
+            self.record_results((start, authenticationTime, requestTime, error))
+
+class KeystoneUserList(KeystoneLoadGenerator):
+    create_query = "create table keystone (start integer, request_time integer, error text);"
+    commit_query = "insert into keystone values (?, ?, ?);"
+    def __init__(self, auth_host):
+        super(KeystoneUserList, self).__init__(auth_host)
+        try:
+            log("Creating keystone session...")
+            self.keystone = self.create_keystone_session()
+        except Exception, e:
+            log("Error creating keystone session: %s" % e)
+    
+    def execute_request(self):
+        request_time = 0
+        error = None
+        try:
+            start = time.time()
+            self.keystone.users.list()
+            request_time = time.time() - start
+        except Exception, e:
+            error  = "Exception: %s" % e
+        finally:
+            self.record_results((start, request_time, error))
+
 if __name__ == "__main__":
     main(sys.argv[1:])
 
