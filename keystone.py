@@ -7,17 +7,31 @@ from keystoneclient.openstack.common.apiclient.exceptions import AuthorizationFa
 DATABASE_BASE = 'tests.sqlite'
 DATABASE_SUFFIX = 'db'
 
+# Number of results to buffer before writing them to the database.
 BUFFERED_RESULTS = 100
+
+# Number of threads creating requests. Requests-queue will stall if there are
+# not enough workers or if requests take too long to come back.
 NUM_WORKERS = 10
 
-NUM_SECONDS = 0
-# NUM_SECONDS = 20
+# Set this for timed execution - will terminate after this time
+NUM_SECONDS = 0 # 20
 
-requests_per_second = 5
-PRODUCER_TIMEOUT = 0.2 # seconds
+# Rate (in seconds) at which new request-jobs are added to the queue.
+# Determines the "granularity" of creating new requests
+BASE_PRODUCER_TIMEOUT = 0.2
 
-INCREMENT_REQUESTS = int(PRODUCER_TIMEOUT * requests_per_second)
-PRODUCER_TIMEOUT = float(INCREMENT_REQUESTS) / requests_per_second # Adjust value to fix int-rounding above
+# Initial number of requests per second
+REQUESTS_PER_SECOND = 1
+
+# Set this to slowly increase the number of requests per second.
+# Once in a fixed interval, the reqs_per_second are increased by a fixed value.
+increase_production_speed = True
+if increase_production_speed:
+    PRODUCTION_SPEEDUP_TIMEOUT = 2*60
+    PRODUCTION_SPEEDUP_INCREMENT = 1
+else:
+    PRODUCTION_SPEEDUP_TIMEOUT = 0
 
 def log(string):
     import datetime
@@ -36,8 +50,15 @@ def main(argv):
     l = klass(host)
     
     log("Running against %s" % l.auth_url)
+    log("Running with %i requests per second" % REQUESTS_PER_SECOND)
     log("Starting worker threads...")
+    l.set_requests_per_second(REQUESTS_PER_SECOND)
     l.create_production_worker()
+    if PRODUCTION_SPEEDUP_TIMEOUT > 0:
+        log("Incrementing reqs_per_second by %i every %i seconds" % (PRODUCTION_SPEEDUP_INCREMENT, PRODUCTION_SPEEDUP_TIMEOUT))
+        l.production_speedup_increment = PRODUCTION_SPEEDUP_INCREMENT
+        l.production_speedup_timeout = PRODUCTION_SPEEDUP_TIMEOUT
+        l.start_production_speedup_worker()
     for _ in range(NUM_WORKERS):
         l.create_execution_worker()
     starttime = time.time()
@@ -59,8 +80,10 @@ def main(argv):
     l.flush_results()
     
     duration = l.last_request_end - starttime
+    seconds_per_req = duration*1000/l.request_nr if l.request_nr > 0 else 0
+    reqs_per_second = l.request_nr/duration
     log("Executed %i requests in %.2f seconds. %.2f requests per second, %.2f milliseconds per request." \
-                % (l.request_nr, duration, l.request_nr/duration, duration*1000/l.request_nr))
+                % (l.request_nr, duration, reqs_per_second, seconds_per_req))
 
 class DatabaseConnection(object):
     def __init__(self, generator, description="<unknown>", fatal=False):
@@ -124,14 +147,17 @@ class LoadGenerator(object):
         self.threads = []
         
         # Request management
-        self.producer_timeout = PRODUCER_TIMEOUT
-        self.requests_increment = INCREMENT_REQUESTS
+        self.set_requests_per_second(1)
+        self.production_speedup_timeout = 60
+        self.production_speedup_increment = 1
         self.request_semaphore = threading.Semaphore(0)
     
     def connection(self, description="<unknown>", fatal=False):
+        """Create a new database connection (use in with: statement)"""
         return DatabaseConnection(self, description, fatal)
 
     def record_results(self, values):
+        """Add new results to the results buffer."""
         flush_results = False
         try:
             self.results_lock.acquire()
@@ -147,6 +173,7 @@ class LoadGenerator(object):
             self.commit_results(results_copy)
     
     def flush_results(self):
+        """Write all values currently in the results-buffer into the database."""
         try:
             self.results_lock.acquire()
             results_copy = list(self.results)
@@ -156,6 +183,7 @@ class LoadGenerator(object):
         self.commit_results(results_copy)
     
     def commit_results(self, values):
+        """Write the given values into the database."""
         if len(values) > 0:
             with self.connection(description="updating values") as c:
                 log("Committing %i results" % len(values))
@@ -183,15 +211,38 @@ class LoadGenerator(object):
     
     def increment_requests(self):
         # Add X outstanding jobs to the "queue"
-        for _ in range(self.requests_increment):
+        for _ in range(self.producer_increment):
             self.request_semaphore.release()
+   
+    def start_production_speedup_worker(self):
+        """This thread will be started as a daemon immediately due to the long sleep time"""
+        def speedup_production():
+            while self.workers_running:
+                time.sleep(self.production_speedup_timeout)
+                if self.workers_running:
+                    reqs = self.requests_per_second()
+                    reqs += self.production_speedup_increment
+                    log("Setting requests_per_second to %i" % reqs)
+                    self.set_requests_per_second(reqs)
+        thread = threading.Thread(target = speedup_production)
+        thread.daemon = True
+        thread.start()
     
+    def set_requests_per_second(self, requests_per_second):
+        self.producer_increment = int(float(BASE_PRODUCER_TIMEOUT) * float(requests_per_second))
+        if self.producer_increment <= 0: self.producer_increment = 1 
+        self.producer_timeout = float(self.producer_increment) / float(requests_per_second) # Adjust value to fix int-rounding above
+    
+    def requests_per_second(self):
+        return (1/self.producer_timeout) * self.producer_increment
+   
     def finish_workers(self):
         for _ in range(len(self.threads)):
             # Wake up all threads that might be waiting
             # Important: workers_running must already be False!
             self.request_semaphore.release()
-        for thread in self.threads:
+        for i, thread in enumerate(self.threads):
+            # log("Waiting for %i threads..." % (len(self.threads) - i))
             thread.join()
     
     def stop_running(self):

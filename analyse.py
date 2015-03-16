@@ -7,14 +7,14 @@ import matplotlib.pyplot as plt
 DATABASE = "keystone"
 TIME_COLUMN = "start"
 ERR_COLUMN = "error"
-DURATION1 = "authentication_time"
-DURATION2 = "request_time"
 
 def main(argv):
-    if len(argv) != 1:
-        print "Need 1 parameter: sqlite3 database file"
+    if len(argv) != 2:
+        print "Need 2 parameters: sqlite3 database file, column to analyse"
+        sys.exit(1)
     db_file = argv[0]
-    print "Analysing database %s" % db_file
+    ANALYSE_COLUMN = argv[1]
+    print "Analysing %s.%s in database-file %s" % (DATABASE, ANALYSE_COLUMN, db_file)
     conn = sqlite3.connect(db_file)
     try:
         c = conn.cursor()
@@ -27,22 +27,16 @@ def main(argv):
         else:
             print "No rows with errors"
 
-        query = "select %s,%s,%s from %s where %s is null order by %s;" % (TIME_COLUMN, DURATION1, DURATION2, DATABASE, ERR_COLUMN, TIME_COLUMN)
+        query = "select %s,%s from %s where %s is null order by %s;" % (TIME_COLUMN, ANALYSE_COLUMN, DATABASE, ERR_COLUMN, TIME_COLUMN)
         rows = c.execute(query).fetchall()
         data = np.array(rows)
         start = data[:,0]
-        auths = data[:,1]
-        requests = data[:,2]
+        times = data[:,1]
         
         print "Total test run: ", max(start) - min(start)
-        print "Avg auth time: ", np.average(auths)
-        print "Avg request time: ", np.average(requests)
+        print "Avg time: ", np.average(times)
         
-        
-        
-        plt.plot(start, auths)
-        plt.show()
-        plt.plot(start, requests)
+        plt.plot(start, times)
         plt.show()
         
     except Exception, e:
