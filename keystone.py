@@ -33,11 +33,6 @@ if increase_production_speed:
 else:
     PRODUCTION_SPEEDUP_TIMEOUT = 0
 
-# This determines which class will be used to generate the load.
-# Different subclasses of LoadGenerator will perform different actions.
-LoadGenKlass = KeystoneUserList
-#LoadGenKlass = KeystoneAuthAndUserList
-
 def log(string):
     import datetime
     timestring = datetime.datetime.fromtimestamp(time.time()).strftime('%d.%m.%Y %H:%M:%S')
@@ -50,6 +45,11 @@ def main(argv):
         sys.exit(1)
     host = argv[0]
     
+    # This determines which class will be used to generate the load.
+    # Different subclasses of LoadGenerator will perform different actions.
+    LoadGenKlass = KeystoneUserList
+    #LoadGenKlass = KeystoneAuthAndUserList
+
     l = LoadGenKlass(host)
     
     log("Running against %s" % l.auth_url)
