@@ -240,10 +240,6 @@ class LoadGenerator(object):
         return (1/self.producer_timeout) * self.producer_increment
    
     def finish_workers(self):
-        for _ in range(len(self.threads)):
-            # Wake up all threads that might be waiting
-            # Important: workers_running must already be False!
-            self.request_semaphore.release()
         for i, thread in enumerate(self.threads):
             # log("Waiting for %i threads..." % (len(self.threads) - i))
             thread.join()
@@ -251,6 +247,9 @@ class LoadGenerator(object):
     def stop_running(self):
         log("Stopping workers...")
         self.workers_running = False
+        for _ in range(len(self.threads)):
+            # Wake up all threads that might be waiting
+            self.request_semaphore.release()
    
 class KeystoneLoadGenerator(LoadGenerator):
     AUTH_URL_PATTERN = 'http://%s:35357/v2.0'
