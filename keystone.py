@@ -8,11 +8,11 @@ DATABASE_BASE = 'tests.sqlite'
 DATABASE_SUFFIX = 'db'
 
 # Number of results to buffer before writing them to the database.
-BUFFERED_RESULTS = 100
+BUFFERED_RESULTS = 400
 
 # Number of threads creating requests. Requests-queue will stall if there are
 # not enough workers or if requests take too long to come back.
-NUM_WORKERS = 10
+NUM_WORKERS = 100
 
 # Set this for timed execution - will terminate after this time
 NUM_SECONDS = 60*60
