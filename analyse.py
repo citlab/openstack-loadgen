@@ -18,10 +18,14 @@ def main(argv):
             return np.array(rows)
        
         try:
-            errors = read_table("errors")
+            numerrors = c.execute("select count(*) from errors").fetchall()[0][0]
+            errors = c.execute("select distinct error from errors").fetchall()
+            errors = [ e[0] for e in errors ]
             if len(errors) > 0:
-                print "Rows with errors:"
+                print "\nTotal number of errors: %i" % numerrors
+                print "Distinct errors:"
                 for r in errors: print r
+                print
         except Exception, e:
             print "Error reading table 'errors': %s" % e
         

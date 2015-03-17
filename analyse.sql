@@ -33,3 +33,15 @@ select second, count(*) from active_requests as data group by second;
 
 create table if not exists analyse_request_durations as
 select second, avg(time) as data from active_requests group by second;
+
+-- Analysis per minute, if runtime too long for second-wise analysis
+
+create table if not exists active_requests_minutes as
+select cast(second/60 as integer) as minute, start, end, time from active_requests
+group by cast(second/60 as integer), start, end, time;
+
+create table if not exists analyse_active_requests_number_per_minute as
+select minute, count(*) from active_requests_minutes as data group by minute;
+
+create table if not exists analyse_active_requests_durations_per_minute as
+select minute, avg(time) from active_requests_minutes as data group by minute;
