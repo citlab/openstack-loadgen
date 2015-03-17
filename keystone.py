@@ -1,5 +1,5 @@
 
-import sys, signal, sqlite3, time, os, threading
+import sys, signal, sqlite3, time, os, threading, multiprocessing
 
 from keystoneclient.v2_0 import client
 from keystoneclient.openstack.common.apiclient.exceptions import AuthorizationFailure
@@ -15,7 +15,7 @@ BUFFERED_RESULTS = 100
 NUM_WORKERS = 10
 
 # Set this for timed execution - will terminate after this time
-NUM_SECONDS = 0 # 20
+NUM_SECONDS = 60*60
 
 # Rate (in seconds) at which new request-jobs are added to the queue.
 # Determines the "granularity" of creating new requests
@@ -47,11 +47,12 @@ def main(argv):
     
     # This determines which class will be used to generate the load.
     # Different subclasses of LoadGenerator will perform different actions.
-    LoadGenKlass = KeystoneUserList
+    LoadGenKlass = lambda host: DirectKeystoneUserList(host, "controller")
+    #LoadGenKlass = KeystoneUserList
     #LoadGenKlass = KeystoneAuthAndUserList
-
-    l = LoadGenKlass(host)
     
+    # ======== Create and start worker threads
+    l = LoadGenKlass(host)
     log("Running against %s" % l.auth_url)
     log("Running with %i requests per second" % REQUESTS_PER_SECOND)
     log("Starting worker threads...")
@@ -68,20 +69,29 @@ def main(argv):
     for thread in l.threads:
         thread.start()
     
+    # ======== Set up termination
     if NUM_SECONDS > 0:
-        log("Running for %i seconds..." % NUM_SECONDS)
-        threading.Timer(NUM_SECONDS, l.stop_running).start()
-    else:
-        log("Running until CTRL-C interrupt...")
-        def signal_handler(signum, frame):
-            log("Signal %s caught." % signum)
-            l.stop_running()
-        signal.signal(signal.SIGINT, signal_handler)
-        signal.pause()
+        def kill_self():
+            own_pid = multiprocessing.current_process().pid
+            log("Sending SIGINT to current process (%i)" % own_pid)
+            os.kill(own_pid, signal.SIGINT)
+        log("Terminating automatically after %i seconds..." % NUM_SECONDS)
+        timer = threading.Timer(NUM_SECONDS, kill_self)
+        timer.daemon = True
+        timer.start()
+    log("Press CTRL-C to interrupt (or kill -INT ...)...")
+    def signal_handler(signum, frame):
+        log("Signal %s caught." % signum)
+        l.stop_running()
+    signal.signal(signal.SIGINT, signal_handler)
+    # Wait for SIGINT from outside or from timer
+    signal.pause()
     
+    # ======== Wait for threads and write last results
     l.finish_workers()
     l.flush_results()
     
+    # ======== Output some lowlevel statistics
     duration = l.last_request_end - starttime
     seconds_per_req = duration*1000/l.request_nr if l.request_nr > 0 else 0
     reqs_per_second = l.request_nr/duration
@@ -309,6 +319,35 @@ class KeystoneUserList(KeystoneLoadGenerator):
             error  = "Exception: %s" % e
         finally:
             self.record_results((start, request_time, error))
+
+def Fix_Endpoints(keystone, old_controller, new_controller):
+    # Metaprogramming: Traverse all string-values in __dict__ and sub-dictionaries
+    # of keystone-object, in all string-values, replace old_ with new_controller
+    handled = list()
+    depth = [0]
+    def fix(o):
+        if o in handled: return
+        handled.append(o)
+        if isinstance(o, dict):
+            for key, value in o.iteritems():
+                if type(value) is str or type(value) is unicode:
+                    if old_controller in value:
+                        newvalue = value.replace(old_controller, new_controller)
+                        log("Fixed endpoint: %s -> %s" % (value, newvalue))
+                        o[key] = newvalue
+                else:
+                    fix(value)
+        elif isinstance(o, list):
+            for v in o: fix(v)
+        elif type(o).__module__.startswith("keystoneclient"):
+            fix(o.__dict__)
+    fix(keystone)
+
+class DirectKeystoneUserList(KeystoneUserList):
+    def __init__(self, auth_host, expected_controller_endpoint):
+        super(DirectKeystoneUserList, self).__init__(auth_host)
+        log("Fixing all endpoints from %s to %s" % (expected_controller_endpoint, auth_host))
+        Fix_Endpoints(self.keystone, expected_controller_endpoint, auth_host)
 
 if __name__ == "__main__":
     main(sys.argv[1:])
