@@ -1,5 +1,5 @@
 
-test $# -gt 1 || { echo Need 1 parameter: target host; exit 1; }
+test $# -ge 1 || { echo Need 1 parameter: target host; exit 1; }
 target="$1"
 host=`hostname`
 
