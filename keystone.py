@@ -1,11 +1,8 @@
 
-import sys, signal, sqlite3, time, os, threading, multiprocessing
+import sys, signal, sqlite3, time, os, threading, multiprocessing, argparse
 
-from keystoneclient.v2_0 import client
+import keystoneclient, novaclient
 from keystoneclient.openstack.common.apiclient.exceptions import AuthorizationFailure
-
-DATABASE_BASE = 'tests.sqlite'
-DATABASE_SUFFIX = 'db'
 
 # Number of results to buffer before writing them to the database.
 BUFFERED_RESULTS = 400
@@ -14,24 +11,16 @@ BUFFERED_RESULTS = 400
 # not enough workers or if requests take too long to come back.
 NUM_WORKERS = 100
 
-# Set this for timed execution - will terminate after this time
-NUM_SECONDS = 60*60
-
 # Rate (in seconds) at which new request-jobs are added to the queue.
 # Determines the "granularity" of creating new requests
 BASE_PRODUCER_TIMEOUT = 0.2
 
-# Initial number of requests per second
-REQUESTS_PER_SECOND = 1
+# Pattern for keystone auth_url. The %s will be replaced with the configured host.
+AUTH_URL_PATTERN = 'http://%s:35357/v2.0'
 
-# Set this to slowly increase the number of requests per second.
-# Once in a fixed interval, the reqs_per_second are increased by a fixed value.
-increase_production_speed = True
-if increase_production_speed:
-    PRODUCTION_SPEEDUP_TIMEOUT = 2*60
-    PRODUCTION_SPEEDUP_INCREMENT = 1
-else:
-    PRODUCTION_SPEEDUP_TIMEOUT = 0
+# Expected controller endpoint as returned by keystone. For now all our endpoints
+# are configured to point to the 'controller' host.
+EXPECTED_CONTROLLER_ENDPOINT = 'controller'
 
 def log(string):
     import datetime
@@ -39,29 +28,66 @@ def log(string):
     print "%s: %s" % (timestring, string)
     sys.stdout.flush()
 
+def get_database_name():
+    # Find a non-existing database-file
+    DATABASE_BASE = 'tests.sqlite'
+    DATABASE_SUFFIX = 'db'
+    database_name = DATABASE_BASE
+    i = 0
+    while True:
+        database_name = "%s.%i.%s" % (DATABASE_BASE, i, DATABASE_SUFFIX)
+        i += 1
+        if not os.path.exists(database_name):
+            break
+    return database_name
+
 def main(argv):
-    if len(argv) != 1:
-        log("Need one argument: keystone host to connect to.")
-        sys.exit(1)
-    host = argv[0]
+    services = {
+        'keystone': KeystoneMixin,
+        'nova': NovaMixin,
+    }
     
-    # This determines which class will be used to generate the load.
-    # Different subclasses of LoadGenerator will perform different actions.
-    LoadGenKlass = lambda host: DirectKeystoneUserList(host, "controller")
-    #LoadGenKlass = KeystoneUserList
-    #LoadGenKlass = KeystoneAuthAndUserList
+    parser = argparse.ArgumentParser(description='Fire requests at a keystone endpoint and log the results to a sqlite file.')
+    parser.add_argument('-H', '--host', type=str, required=True, help='Keystone host to authenticate to.')
+    parser.add_argument('-U', '--user', type=str, required=True, help='Keystone user name.')
+    parser.add_argument('-P', '--password', type=str, required=True, help='Keystone password.')
+    parser.add_argument('-T', '--tenant', type=str, required=True, help='Keystone tenant.')
+    parser.add_argument('-s', '--service', default='keystone', type=str, help='The targeted OpenStack service. Available services: %s' % services.keys())
+    parser.add_argument('--full_session', type=bool, default=False, help='If set to true, each request will initiate a full session. By default, one session is created in the beginning.')
+    parser.add_argument('--fix_host', type=str, help='After authenticating to keystone, ignore the received endpoints and use the given host/ip for any further requests.')
+    parser.add_argument('-d', '--db', type=str, help='Database file to use. Must be non-existing. tests.sqlite.*.db is used by default.')
+    parser.add_argument('-t', '--timeout', default=0, type=int, help='Timeout in seconds, after which the experiment is stopped automatically.')
+    parser.add_argument('-r', '--requests_per_second', default=2, type=int, help='Requests fired per second. Combined with -i, this is the initial requests-per-second value.')
+    parser.add_argument('-i', '--requests_increment', default=0, type=int, help='Additional number of requests added each speedup-interval (set by -I).')
+    parser.add_argument('-I', '--requests_increment_timeout', default=120, type=int, help='Number of seconds before increasing the requests per second. Only applied when -i is larger then zero.')
+    args = parser.parse_args()
+    
+    database_name = args.db or get_database_name()
+    if os.path.exists(args.db):
+        print "Database file %s already exists." % database_name
+        return 1
+    log("Writing to database %s" % database_name)
+    if args.service not in services:
+        print "Unknown target service: %s. Available services: %s" % (args.service, services.keys())
+        return 1
+    
+    # ======== Create the load generator class
+    BaseGenerator = FullSessionGenerator if args.full_session else AuthenticateOnceGenerator
+    GeneratorMixin = services[args.service]
+    class LoadGenerator(GeneratorMixin, BaseGenerator):
+        pass
     
     # ======== Create and start worker threads
-    l = LoadGenKlass(host)
+    l = LoadGenerator(args)
     log("Running against %s" % l.auth_url)
-    log("Running with %i requests per second" % REQUESTS_PER_SECOND)
+    log("Running with %i requests per second" % args.requests_per_second)
     log("Starting worker threads...")
-    l.set_requests_per_second(REQUESTS_PER_SECOND)
+    l.set_requests_per_second(args.requests_per_second)
     l.create_production_worker()
-    if PRODUCTION_SPEEDUP_TIMEOUT > 0:
-        log("Incrementing reqs_per_second by %i every %i seconds" % (PRODUCTION_SPEEDUP_INCREMENT, PRODUCTION_SPEEDUP_TIMEOUT))
-        l.production_speedup_increment = PRODUCTION_SPEEDUP_INCREMENT
-        l.production_speedup_timeout = PRODUCTION_SPEEDUP_TIMEOUT
+    if args.requests_increment > 0:
+        log("Incrementing requests_per_second by %i every %i seconds" % (args.requests_increment, args.requests_increment_timeout))
+        l.production_speedup_increment = args.requests_increment
+        l.production_speedup_timeout = args.requests_increment_timeout
         l.start_production_speedup_worker()
     for _ in range(NUM_WORKERS):
         l.create_execution_worker()
@@ -70,13 +96,13 @@ def main(argv):
         thread.start()
     
     # ======== Set up termination
-    if NUM_SECONDS > 0:
+    if args.timeout > 0:
         def kill_self():
             own_pid = multiprocessing.current_process().pid
             log("Sending SIGINT to current process (%i)" % own_pid)
             os.kill(own_pid, signal.SIGINT)
-        log("Terminating automatically after %i seconds..." % NUM_SECONDS)
-        timer = threading.Timer(NUM_SECONDS, kill_self)
+        log("Terminating automatically after %i seconds..." % args.timeout)
+        timer = threading.Timer(args.timeout, kill_self)
         timer.daemon = True
         timer.start()
     log("Press CTRL-C to interrupt (or kill -INT ...)...")
@@ -126,22 +152,14 @@ class DatabaseConnection(object):
 
 class LoadGenerator(object):
 
-    def __init__(self):
+    def __init__(self, args):
         if self.commit_query is None:
             raise Exception("Need non-abstract subclass with commit_query attribute!")
         if self.create_query is None:
             raise Exception("Need non-abstract subclass with create_query attribute!")
         
-        # Use a non-existing database-file
-        self.database_name = DATABASE_BASE
-        i = 0
-        while True:
-            self.database_name = "%s.%i.%s" % (DATABASE_BASE, i, DATABASE_SUFFIX)
-            i += 1
-            if not os.path.exists(self.database_name):
-                break
-        log("Writing to database %s" % self.database_name)
-        
+        self.database_name = args.db
+
         # Create table for our measurements
         with self.connection(description="creating table", fatal=True) as c:
             c.execute(self.create_query)
@@ -261,33 +279,72 @@ class LoadGenerator(object):
             # Wake up all threads that might be waiting
             self.request_semaphore.release()
    
-class KeystoneLoadGenerator(LoadGenerator):
-    AUTH_URL_PATTERN = 'http://%s:35357/v2.0'
-    user = 'admin'
-    password = 'iep9Teig'
-    tenant = 'admin'
+class AuthenticatingLoadGenerator(LoadGenerator):
     
-    def __init__(self, auth_host):
-        super(KeystoneLoadGenerator, self).__init__()
-        self.auth_url = self.AUTH_URL_PATTERN % auth_host
+    def __init__(self, args):
+        super(AuthenticatingLoadGenerator, self).__init__(args)
+        self.auth_url = AUTH_URL_PATTERN % args.host
+        self.args = args
     
-    def create_keystone_session(self):
-        return client.Client(auth_url=self.auth_url, \
-               username=self.user, password=self.password, tenant_name=self.tenant)
+    def get_client_class(self):
+        raise NotImplementedError("Abstract class")
+    
+    def client_module_name(self):
+        raise NotImplementedError("Abstract class")
+    
+    def execute_client_request(self, client):
+        raise NotImplementedError("Abstract class")
+    
+    def table_name(self):
+        raise NotImplementedError("Abstract class")
 
-class KeystoneAuthAndUserList(KeystoneLoadGenerator):
-    create_query = "create table keystone (start integer, authentication_time integer, request_time integer, error text);"
-    commit_query = "insert into keystone values (?, ?, ?, ?);"
+    def create_session(self):
+        client = self.create_client_session()
+        if self.args.fix_host:
+            log("Fixing all endpoints from %s to %s" % (EXPECTED_CONTROLLER_ENDPOINT, self.args.fix_host))
+            self.fixEndpoints(client, EXPECTED_CONTROLLER_ENDPOINT, self.args.fix_host)
+        return client
+
+    def fixEndpoints(self, client, old_controller, new_controller):
+        # Metaprogramming: Traverse all string-values in __dict__ and sub-dictionaries
+        # of client-object, in all string-values, replace old_ with new_controller
+        handled = list()
+        depth = [0]
+        def fix(o):
+            if o in handled: return
+            handled.append(o)
+            if isinstance(o, dict):
+                for key, value in o.iteritems():
+                    if type(value) is str or type(value) is unicode:
+                        if old_controller in value:
+                            newvalue = value.replace(old_controller, new_controller)
+                            log("Fixed endpoint: %s -> %s" % (value, newvalue))
+                            o[key] = newvalue
+                    else:
+                        fix(value)
+            elif isinstance(o, list):
+                for v in o: fix(v)
+            elif type(o).__module__.startswith(self.client_module_name()):
+                fix(o.__dict__)
+        fix(client)
+
+class FullSessionGenerator(AuthenticatingLoadGenerator):
+    """This generator creates a full session with each request, including complete authentication etc."""
+    def __init__(self, args):
+        self.create_query = "create table %s (start integer, authentication_time integer, request_time integer, error text);" % self.table_name()
+        self.commit_query = "insert into %s values (?, ?, ?, ?);" % self.table_name()
+        super(FullSessionUserList, self).__init__(args)
+
     def execute_request(self):
         error = None
         authenticationTime = 0
         requestTime = 0
         try:
             start = time.time()
-            keystone = self.create_keystone_session()
+            client = self.create_session()
             authenticated = time.time()
             authenticationTime = authenticated - start
-            keystone.users.list()
+            self.execute_client_request(client)
             end = time.time()
             requestTime = end - authenticated
         except AuthorizationFailure, f:
@@ -297,57 +354,65 @@ class KeystoneAuthAndUserList(KeystoneLoadGenerator):
         finally:
             self.record_results((start, authenticationTime, requestTime, error))
 
-class KeystoneUserList(KeystoneLoadGenerator):
-    create_query = "create table keystone (start integer, request_time integer, error text);"
-    commit_query = "insert into keystone values (?, ?, ?);"
-    def __init__(self, auth_host):
-        super(KeystoneUserList, self).__init__(auth_host)
-        try:
-            log("Creating keystone session...")
-            self.keystone = self.create_keystone_session()
-        except Exception, e:
-            log("Error creating keystone session: %s" % e)
+class AuthenticateOnceGenerator(AuthenticatingLoadGenerator):
+    """This generator authenticates once and then sends lightweigh requests instead of re-authenticating each time."""
+    def __init__(self, args):
+        self.create_query = "create table %s (start integer, request_time integer, error text);" % self.table_name()
+        self.commit_query = "insert into %s values (?, ?, ?);" % self.table_name()
+        super(AuthenticateOnceGenerator, self).__init__(args)
+        log("Creating session...")
+        self.client = self.create_session()
     
     def execute_request(self):
         request_time = 0
         error = None
         try:
             start = time.time()
-            self.keystone.users.list()
+            self.execute_client_request(self.client)
             request_time = time.time() - start
         except Exception, e:
             error  = "Exception: %s" % e
+            # TODO remove
+            print error
         finally:
             self.record_results((start, request_time, error))
 
-def Fix_Endpoints(keystone, old_controller, new_controller):
-    # Metaprogramming: Traverse all string-values in __dict__ and sub-dictionaries
-    # of keystone-object, in all string-values, replace old_ with new_controller
-    handled = list()
-    depth = [0]
-    def fix(o):
-        if o in handled: return
-        handled.append(o)
-        if isinstance(o, dict):
-            for key, value in o.iteritems():
-                if type(value) is str or type(value) is unicode:
-                    if old_controller in value:
-                        newvalue = value.replace(old_controller, new_controller)
-                        log("Fixed endpoint: %s -> %s" % (value, newvalue))
-                        o[key] = newvalue
-                else:
-                    fix(value)
-        elif isinstance(o, list):
-            for v in o: fix(v)
-        elif type(o).__module__.startswith("keystoneclient"):
-            fix(o.__dict__)
-    fix(keystone)
+class KeystoneMixin(object):
+    def execute_client_request(self, client):
+        client.users.list()
+    def create_client_session(self):
+        klass = keystoneclient.v2_0.client.Client
+        a = self.args
+        return klass(auth_url=self.auth_url, username=a.user, password=a.password, tenant_name=a.tenant)
+    def client_module_name(self):
+        return "keystoneclient"
+    def table_name(self):
+        return "keystone"
 
-class DirectKeystoneUserList(KeystoneUserList):
-    def __init__(self, auth_host, expected_controller_endpoint):
-        super(DirectKeystoneUserList, self).__init__(auth_host)
-        log("Fixing all endpoints from %s to %s" % (expected_controller_endpoint, auth_host))
-        Fix_Endpoints(self.keystone, expected_controller_endpoint, auth_host)
+class NovaMixin(object):
+    def execute_client_request(self, client):
+        client.flavors.list()
+    def create_client_session(self):
+        from novaclient.v1_1 import client
+        a = self.args
+        from keystoneclient.auth.identity import v2
+        from keystoneclient import session
+        from novaclient.client import Client
+        auth = v2.Password(auth_url=self.auth_url,
+                               username=a.user,
+                               password=a.password,
+                               tenant_name=a.tenant)
+        sess = session.Session(auth=auth)
+        return client.Client(service_type='compute', session=sess)
+        
+        # klass = novaclient.v1_1.client.Client
+        # klass = client.Client
+        # import pdb; pdb.set_trace()
+        # return klass(auth_url = self.auth_url, username=a.user, api_key=a.password, project_id=a.tenant)
+    def client_module_name(self):
+        return "novaclient"
+    def table_name(self):
+        return "nova"
 
 if __name__ == "__main__":
     main(sys.argv[1:])
