@@ -239,7 +239,8 @@ class KeystoneSession(object):
         for klass in api_klasses:
             if service_type in klass.supported_service_types:
                 return klass
-        raise Exception("No API class found for service type %s" % service_type)
+        services = self.get_all_service_types()
+        raise Exception("No API class found for service type %s. Available services: %s" % (service_type, services))
 
     @staticmethod
     def get_all_api_classes():

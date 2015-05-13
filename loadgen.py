@@ -31,6 +31,32 @@ def get_database_name():
             break
     return database_name
 
+# For request generator parameters
+def check_params(args, required=[], optional={}):
+    ok = True
+    for param in required:
+        if not hasattr(args, param):
+            print "Missing request generator parameter: %s" % param
+            ok = False
+    for param, (typ, default) in optional.items():
+        if hasattr(args, param):
+            value = getattr(args, param)
+            try:
+                typevalue = typ(value)
+            except Exception, e:
+                print "Failed to convert request generator parameter %s to type %s" % (param, t)
+                ok = False
+        else:
+            setattr(args, param, default)
+    if not ok:
+        raise Exception("Error(s) parsing load generator parameters.")
+
+def safe_tablename(string):
+    # Remove every non-alphanumeric character to get a safe sql identifier.
+    import re
+    pattern = re.compile('[\W_]+')
+    return pattern.sub('', string)
+
 def main(argv):
     parser = argparse.ArgumentParser(description='Execute certain requests and log the results to a sqlite file.')
     parser.add_argument('-k', '--klass', required=True, type=str, help='Fully qualified Python class to use as request generator. The class must subclass LoadGenerator and conform to a certain API.')
@@ -150,6 +176,7 @@ class DatabaseConnection(object):
 class LoadGenerator(object):
 
     def __init__(self, args):
+        self.args = args
         if self.commit_query is None:
             raise Exception("Need non-abstract subclass with commit_query attribute!")
         if self.create_query is None:
@@ -224,7 +251,10 @@ class LoadGenerator(object):
             if self.workers_running:
                 self.execute_request()
                 self.last_request_end = time.time()
-    
+   
+    def execute_request(self):
+        raise NotImplementedError("Subclasses must implemente execute_request method")
+
     def create_execution_worker(self):
         thread = threading.Thread(target = self.execution_worker)
         self.threads.append(thread)

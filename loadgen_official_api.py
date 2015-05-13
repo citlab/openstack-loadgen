@@ -14,31 +14,10 @@ AUTH_URL_PATTERN = 'http://%s:35357/v2.0'
 EXPECTED_CONTROLLER_ENDPOINT = 'controller'
 
 def check_args(args):
-    ok = True
-    def required(param):
-        if not hasattr(args, param):
-            print "Missing request Generator parameter: %s" % param
-            return False
-        return True
-    def optional(param, t, default):
-        if hasattr(args, param):
-            value = getattr(args, param)
-            try:
-                typevalue = t(value)
-            except Exception, e:
-                print "Failed to convert parameter %s to type %s" % (param, t)
-                return False
-        else:
-            setattr(args, param, default)
-        return True
-    ok = required("host") and ok
-    ok = required("user") and ok
-    ok = required("password") and ok
-    ok = required("tenant") and ok
-    ok = optional("full_session", bool, False) and ok
-    ok = optional("fix_host", bool, False) and ok
-    if not ok:
-        raise Exception("Error(s) parsing load generator parameters.")
+    from loadgen import check_params
+    check_params(args,
+        ['host', 'user', 'password', 'tenant'],
+        { "fix_host": (str, "") })
 
 class AuthenticatingLoadGenerator(loadgen.LoadGenerator):
     
@@ -117,7 +96,7 @@ class FullSessionGenerator(AuthenticatingLoadGenerator):
             self.record_results((start, authenticationTime, requestTime, error))
 
 class AuthenticateOnceGenerator(AuthenticatingLoadGenerator):
-    """This generator authenticates once and then sends lightweigh requests instead of re-authenticating each time."""
+    """This generator authenticates once and then sends lightweight requests instead of re-authenticating each time."""
     def __init__(self, args):
         self.create_query = "create table %s (start integer, request_time integer, error text);" % self.table_name()
         self.commit_query = "insert into %s values (?, ?, ?);" % self.table_name()
