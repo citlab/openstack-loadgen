@@ -1,6 +1,13 @@
 
 import requests, json
 
+try:
+    # Python 2
+    from urlparse import urlparse
+except:
+    # Python 3
+    from urllib.parse import urlparse
+
 KEYSTONE_PUBLIC_PORT = 5000
 KEYSTONE_ADMIN_PORT = 35357
 
@@ -12,14 +19,14 @@ class Endpoint(object):
     ADMIN = object()
     INTERNAL = object()
     PUBLIC = object()
-    
+
     def __init__(self, admin, internal, public, default=None):
         if not default: default = Endpoint.PUBLIC
         self.default = default
         self.admin = Endpoint.fix_url(admin)
         self.internal = Endpoint.fix_url(internal)
         self.public = Endpoint.fix_url(public)
-    
+
     @staticmethod
     def from_json(json, default=None):
         admin = Endpoint.fix_url(json["adminURL"])
@@ -32,18 +39,16 @@ class Endpoint(object):
         if url[-1] != '/':
             url += '/'
         return url
-   
+
     @staticmethod
     def change_url_host(url_str, new_host):
-        import urlparse
-        url = urlparse.urlparse(url_str)
+        url = urlparse(url_str)
         replaced = url._replace(netloc="{}:{}".format(new_host, url.port))
         return replaced.geturl()
 
     @staticmethod
     def change_url_path(url_str, new_path):
-        import urlparse
-        url = urlparse.urlparse(url_str)
+        url = urlparse(url_str)
         replaced = url._replace(path=new_path)
         return replaced.geturl()
 
@@ -72,7 +77,7 @@ class OpenstackApi(object):
         self.session = session
         self.endpoint = endpoint
         self.do_authenticate = True
-    
+
     def set_endpoint(self, new_endpoint):
         self.endpoint = new_endpoint
 
@@ -95,13 +100,13 @@ class OpenstackApi(object):
         r = requests.get(url, params=params, headers=headers)
         self.check_response(r)
         return r.json()
-    
+
     def get(self, path, params={}):
         assert self.endpoint, "endpoint attribute is required."
         headers = {}
         self.add_token(headers)
         return self.basic_get(str(self.endpoint) + path, params, headers)
-    
+
     def post(self, path, data={}):
         assert self.endpoint, "endpoint attribute is required."
         headers = { "Content-Type": "application/json" }
@@ -122,7 +127,7 @@ class OpenstackApi(object):
             if len(links) == 0:
                 continue
             elif len(links) > 1:
-                print "Warning: Multiple identity endpoints for version %s, using first. Endpoints: %s" % (versionid, endpoints)
+                print("Warning: Multiple identity endpoints for version %s, using first. Endpoints: %s" % (versionid, endpoints))
             endpoint = links[0]["href"]
             if overwrite_host is not None:
                 endpoint = Endpoint.change_url_host(endpoint, overwrite_host)
@@ -140,7 +145,7 @@ class BasicIdentityApi(OpenstackApi):
             if not port: port = KEYSTONE_PUBLIC_PORT
             endpoint = "http://%s:%i/" % (host, port)
         super(BasicIdentityApi, self).__init__(None, endpoint)
-    
+
     def parse_versions(self, versions):
         return versions["versions"]["values"]
 
@@ -162,7 +167,7 @@ class BasicIdentityApi(OpenstackApi):
             t = service["type"]
             endpoints = service["endpoints"]
             if t in services or len(endpoints) > 1:
-                print "Warning: Multiple endpoints for service type %s." % t
+                print("Warning: Multiple endpoints for service type %s." % t)
             services[t] = Endpoint.from_json(endpoints[0])
         return (a["token"], services, a["user"], a["metadata"])
 
@@ -193,11 +198,11 @@ class KeystoneSession(object):
             # This is a hack in order to work with an OpenStack system which delivers wrong host names
             for endpoint in self.services.values():
                 endpoint.fix_host(overwrite_host)
-   
+
     @authenticated
     def token_id(self):
         return self.token["id"]
-    
+
     @authenticated
     def tenant_id(self):
         return self.token["tenant"]["id"]
@@ -233,7 +238,7 @@ class KeystoneSession(object):
                 instance = klass(self, endpoint_type = endpoint_type)
                 endpoint_map[endpoint_type] = instance
         return instance
-    
+
     def _get_service_api_class(self, service_type):
         api_klasses = KeystoneSession.get_all_api_classes()
         for klass in api_klasses:
@@ -259,7 +264,7 @@ class AuthenticatedOpenstackApi(OpenstackApi):
     default_service_type = None
     default_version = None
     default_endpoint_type = Endpoint.PUBLIC
-    
+
     def __init__(self, session, service_type=None, endpoint_type=None, version=None):
         if not service_type:
             assert self.default_service_type, "default_service_type must be set by subclasses!"
@@ -278,10 +283,10 @@ class AuthenticatedOpenstackApi(OpenstackApi):
         except:
             # Not all subclasses support versions() method
             pass
-    
+
     def example(self):
         raise NotImplementedException("No example API-call implemented for this API.")
-    
+
     def check_endpoint(self, version):
         versions = self.versions()
         if version not in versions:
@@ -291,7 +296,7 @@ class AuthenticatedOpenstackApi(OpenstackApi):
             # My endpoint is an "extension" of the returned endpoint. This is ok.
             pass
         else:
-            print "Fixing %s (version %s) endpoint from %s to %s" % (self.service_type, version, self.endpoint, endpoint)
+            print("Fixing %s (version %s) endpoint from %s to %s" % (self.service_type, version, self.endpoint, endpoint))
             self.endpoint = endpoint
 
 class IdentityAdminApi(AuthenticatedOpenstackApi):
@@ -299,10 +304,10 @@ class IdentityAdminApi(AuthenticatedOpenstackApi):
     default_service_type = "identity"
     default_endpoint_type = Endpoint.ADMIN
     default_version = "v2.0" # v2.0 v2.0-admin v2.0-extensions v3 v3-extensions
-    
+
     def parse_versions(self, versions):
         return versions["versions"]["values"]
-    
+
     @authenticated
     def users(self):
         return [ x["username"] for x in self.get("users")["users"] ]
@@ -312,7 +317,7 @@ class ComputeApi(AuthenticatedOpenstackApi):
     supported_service_types = [ "compute" ]
     default_service_type = "compute"
     default_version = "v2.0" # + v2.0-extensions + v2.1
-    
+
     @authenticated
     def servers(self):
         return [ x["name"] for x in self.get("servers")["servers"] ]
@@ -322,7 +327,7 @@ class ImageApi(AuthenticatedOpenstackApi):
     supported_service_types = [ "image" ]
     default_service_type = "image"
     default_version = "v1.1" # v2.1
-    
+
     @authenticated
     def images(self):
         return [ x["name"] for x in self.get("images")["images"] ]
@@ -356,7 +361,7 @@ class ObjectStorageApi(AuthenticatedOpenstackApi):
     supported_service_types = [ "object-store" ]
     default_service_type = "object-store"
     default_version = "v1.0"
-    
+
     @authenticated
     def containers(self):
         return [ x["name"] for x in self.get("") ]
@@ -369,7 +374,7 @@ class OrchestrationApi(AuthenticatedOpenstackApi):
     supported_service_types = [ "orchestration" ]
     default_service_type = "orchestration"
     default_version = "v1.0"
-    
+
     @authenticated
     def stacks(self):
         return [ x["stack_name"] for x in self.get("stacks") ]
@@ -379,12 +384,12 @@ class TelemetryApi(AuthenticatedOpenstackApi):
     supported_service_types = [ "telemetry" ]
     default_service_type = "telemetry"
     default_version = "v2.0"
-    
+
     @authenticated
     def alarms(self):
         return [ x["name"] for x in self.get('alarms') ]
     example = alarms
-    
+
     def versions(self):
         raise Exception("Telemetry API does not support versions")
 
@@ -396,11 +401,10 @@ if __name__ == "__main__":
 
     for api in KeystoneSession.get_all_service_types():
         try:
-            print " === Checking %s" % api
-            print s.get_api(api).example()
-        except Exception, e:
+            print(" === Checking %s" % api)
+            print(s.get_api(api).example())
+        except Exception as e:
             #import traceback
             #traceback.print_exc()
-            print e
+            print(e)
         print
-
