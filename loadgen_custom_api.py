@@ -26,9 +26,9 @@ class OpenstackRequestGenerator(loadgen.LoadGenerator):
         s = api.KeystoneSession(identity_host=self.args.host)
         overwrite_host = self.args.fix_host if self.args.fix_host else None
         s.authenticate(self.args.tenant, self.args.user, self.args.password, overwrite_host=overwrite_host)
-        api = s.get_api(self.args.service)
-        api.timeout = self.args.timeout
-        return s, api
+        a = s.get_api(self.args.service)
+        a.timeout = self.args.timeout
+        return s, a
 
     def execute_request(self):
         request_time = 0
