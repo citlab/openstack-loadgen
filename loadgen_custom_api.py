@@ -8,7 +8,7 @@ def check_args(args):
     from loadgen import check_params
     check_params(args,
         [ 'service', 'host', 'user', 'password', 'tenant' ],
-        { 'fix_host': (str, "") })
+        { 'fix_host': (str, ""), 'timeout': (int, 5) })
 
 class OpenstackRequestGenerator(loadgen.LoadGenerator):
     def __init__(self, args):
@@ -21,12 +21,14 @@ class OpenstackRequestGenerator(loadgen.LoadGenerator):
         log("Creating session...")
         self.session, self.api = self.create_session()
         self.auth_url = self.api.endpoint
-    
+
     def create_session(self):
         s = api.KeystoneSession(identity_host=self.args.host)
         overwrite_host = self.args.fix_host if self.args.fix_host else None
         s.authenticate(self.args.tenant, self.args.user, self.args.password, overwrite_host=overwrite_host)
-        return s, s.get_api(self.args.service)
+        api = s.get_api(self.args.service)
+        api.timeout = self.args.timeout
+        return s, api
 
     def execute_request(self):
         request_time = 0
@@ -40,7 +42,7 @@ class OpenstackRequestGenerator(loadgen.LoadGenerator):
             log(error)
         finally:
             self.record_results((start, request_time, error))
-        
+
     def execute_client_request(self, api):
         return api.example()
-        
+

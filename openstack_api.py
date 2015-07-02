@@ -1,4 +1,3 @@
-
 import requests, json
 
 try:
@@ -77,6 +76,7 @@ class OpenstackApi(object):
         self.session = session
         self.endpoint = endpoint
         self.do_authenticate = True
+        self.timeout = None
 
     def set_endpoint(self, new_endpoint):
         self.endpoint = new_endpoint
@@ -97,7 +97,13 @@ class OpenstackApi(object):
         r.raise_for_status()
 
     def basic_get(self, url, params, headers):
-        r = requests.get(url, params=params, headers=headers)
+        kwargs = {
+            'params': params,
+            'headers': headers
+        }
+        if self.timeout:
+            kwargs['timeout'] = self.timeout
+        r = requests.get(url, **kwargs)
         self.check_response(r)
         return r.json()
 
@@ -111,7 +117,13 @@ class OpenstackApi(object):
         assert self.endpoint, "endpoint attribute is required."
         headers = { "Content-Type": "application/json" }
         self.add_token(headers)
-        r = requests.post(str(self.endpoint) + path, data=json.dumps(data), headers=headers)
+        kwargs = {
+            'data': json.dumps(data),
+            'headers': headers
+        }
+        if self.timeout:
+            kwargs['timeout'] = self.timeout
+        r = requests.post(str(self.endpoint) + path, **kwargs)
         self.check_response(r)
         return r.json()
 

@@ -75,7 +75,7 @@ def main(argv):
                 return 1
             key, value = components
             setattr(args, key, value)
-    
+
     # ======== Prepare the database
     database_name = args.db or get_database_name()
     if os.path.exists(database_name):
@@ -100,7 +100,7 @@ def main(argv):
         import traceback
         traceback.print_exc()
         return 1
-    
+
     # ======== Create and start worker threads
     log("Running against %s" % l.auth_url)
     log("Running with %i requests per second" % args.requests_per_second)
@@ -117,7 +117,7 @@ def main(argv):
     starttime = time.time()
     for thread in l.threads:
         thread.start()
-    
+
     # ======== Set up termination
     if args.timeout > 0:
         def kill_self():
@@ -135,11 +135,11 @@ def main(argv):
     signal.signal(signal.SIGINT, signal_handler)
     # Wait for SIGINT from outside or from timer
     signal.pause()
-    
+
     # ======== Wait for threads and write last results
     l.finish_workers()
     l.flush_results()
-    
+
     # ======== Output some lowlevel statistics
     duration = l.last_request_end - starttime
     seconds_per_req = duration*1000/l.request_nr if l.request_nr > 0 else 0
@@ -181,33 +181,33 @@ class LoadGenerator(object):
             raise Exception("Need non-abstract subclass with commit_query attribute!")
         if self.create_query is None:
             raise Exception("Need non-abstract subclass with create_query attribute!")
-        
+
         self.database_name = args.db
         log("Writing to database %s" % self.database_name)
-        
+
         # Create table for our measurements
         with self.connection(description="creating table", fatal=True) as c:
             c.execute(self.create_query)
-        
+
         # Collection of data, shared array guarded by lock
         self.results = []
         self.results_lock = threading.Lock()
         self.results_buffer = BUFFERED_RESULTS
-        
+
         # Some statistics
         self.request_nr = 0
         self.last_request_end = 0
-        
+
         # Workers
         self.workers_running = True
         self.threads = []
-        
+
         # Request management
         self.set_requests_per_second(1)
         self.production_speedup_timeout = 60
         self.production_speedup_increment = 1
         self.request_semaphore = threading.Semaphore(0)
-    
+
     def connection(self, description="<unknown>", fatal=False):
         """Create a new database connection (use in with: statement)"""
         return DatabaseConnection(self, description, fatal)
@@ -227,7 +227,7 @@ class LoadGenerator(object):
             self.results_lock.release()
         if flush_results:
             self.commit_results(results_copy)
-    
+
     def flush_results(self):
         """Write all values currently in the results-buffer into the database."""
         try:
@@ -237,28 +237,28 @@ class LoadGenerator(object):
         finally:
             self.results_lock.release()
         self.commit_results(results_copy)
-    
+
     def commit_results(self, values):
         """Write the given values into the database."""
         if len(values) > 0:
             with self.connection(description="updating values") as c:
                 log("Committing %i results" % len(values))
                 c.executemany(self.commit_query, values)
-    
+
     def execution_worker(self):
         while self.workers_running:
             self.request_semaphore.acquire()
             if self.workers_running:
                 self.execute_request()
                 self.last_request_end = time.time()
-   
+
     def execute_request(self):
-        raise NotImplementedError("Subclasses must implemente execute_request method")
+        raise NotImplementedError("Subclasses must implement execute_request method")
 
     def create_execution_worker(self):
         thread = threading.Thread(target = self.execution_worker)
         self.threads.append(thread)
-    
+
     def create_production_worker(self):
         def produce():
             while self.workers_running:
@@ -267,12 +267,12 @@ class LoadGenerator(object):
                     self.increment_requests()
         thread = threading.Thread(target = produce)
         self.threads.append(thread)
-    
+
     def increment_requests(self):
         # Add X outstanding jobs to the "queue"
         for _ in range(self.producer_increment):
             self.request_semaphore.release()
-   
+
     def start_production_speedup_worker(self):
         """This thread will be started as a daemon immediately due to the long sleep time"""
         def speedup_production():
@@ -286,20 +286,20 @@ class LoadGenerator(object):
         thread = threading.Thread(target = speedup_production)
         thread.daemon = True
         thread.start()
-    
+
     def set_requests_per_second(self, requests_per_second):
         self.producer_increment = int(float(BASE_PRODUCER_TIMEOUT) * float(requests_per_second))
-        if self.producer_increment <= 0: self.producer_increment = 1 
+        if self.producer_increment <= 0: self.producer_increment = 1
         self.producer_timeout = float(self.producer_increment) / float(requests_per_second) # Adjust value to fix int-rounding above
-    
+
     def requests_per_second(self):
         return (1/self.producer_timeout) * self.producer_increment
-   
+
     def finish_workers(self):
         for i, thread in enumerate(self.threads):
             # log("Waiting for %i threads..." % (len(self.threads) - i))
             thread.join()
-    
+
     def stop_running(self):
         log("Stopping workers...")
         self.workers_running = False

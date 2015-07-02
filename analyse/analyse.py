@@ -1,3 +1,4 @@
+#!/usr/bin/env python2
 
 import sqlite3
 import sys
@@ -31,22 +32,19 @@ def main(argv):
         
         tables = c.execute("select name from sqlite_master where type = 'table'").fetchall()
         tables = [ t[0] for t in tables ]
-        print "List of tables: %s" % tables
+        print "List of tables: %s" % ', '.join(tables)
         tables = [ t for t in tables if t.startswith("analyse_") ]
-        print "List of tables to analyse: %s" % tables
+        print "List of tables to analyse: %s" % ', '.join(tables)
         
         for table in tables:
             print "Analysing %s" % table
             rows = read_table(table)
-            seconds = rows[:,0]
+            duration = rows[:,0]
             data = rows[:,1]
-            print "Total test run seconds: ", max(seconds) - min(seconds)
+            print "Total test run duration: ", max(duration) - min(duration)
             print "Avg time: ", np.average(data)
-            plt.plot(seconds, data)
+            plt.plot(duration, data)
             plt.show()
-    
-    except Exception, e:
-        print e
     finally:
         conn.close()
 
