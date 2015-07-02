@@ -20,22 +20,22 @@ def check_args(args):
         { "fix_host": (str, "") })
 
 class AuthenticatingLoadGenerator(loadgen.LoadGenerator):
-    
+
     def __init__(self, args):
         check_args(args)
         super(AuthenticatingLoadGenerator, self).__init__(args)
         self.auth_url = AUTH_URL_PATTERN % args.host
         self.args = args
-    
+
     def get_client_class(self):
         raise NotImplementedError("Abstract class")
-    
+
     def client_module_name(self):
         raise NotImplementedError("Abstract class")
-    
+
     def execute_client_request(self, client):
         raise NotImplementedError("Abstract class")
-    
+
     def table_name(self):
         raise NotImplementedError("Abstract class")
 
@@ -88,9 +88,9 @@ class FullSessionGenerator(AuthenticatingLoadGenerator):
             self.execute_client_request(client)
             end = time.time()
             requestTime = end - authenticated
-        except AuthorizationFailure, f:
+        except AuthorizationFailure as f:
             error = "AuthorizationFailure: %s" % f
-        except Exception, e:
+        except Exception as e:
             error = "Exception: %s" %e
         finally:
             self.record_results((start, authenticationTime, requestTime, error))
@@ -103,7 +103,7 @@ class AuthenticateOnceGenerator(AuthenticatingLoadGenerator):
         super(AuthenticateOnceGenerator, self).__init__(args)
         log("Creating session...")
         self.client = self.create_session()
-    
+
     def execute_request(self):
         request_time = 0
         error = None
@@ -111,10 +111,10 @@ class AuthenticateOnceGenerator(AuthenticatingLoadGenerator):
             start = time.time()
             self.execute_client_request(self.client)
             request_time = time.time() - start
-        except Exception, e:
+        except Exception as e:
             error  = "Exception: %s" % e
             # TODO remove
-            print error
+            print(error)
         finally:
             self.record_results((start, request_time, error))
 
@@ -145,7 +145,7 @@ class NovaMixin(object):
                                tenant_name=a.tenant)
         sess = session.Session(auth=auth)
         return client.Client(service_type='compute', session=sess)
-        
+
         # klass = novaclient.v1_1.client.Client
         # klass = client.Client
         # import pdb; pdb.set_trace()

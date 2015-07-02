@@ -15,7 +15,7 @@ BASE_PRODUCER_TIMEOUT = 0.2
 def log(string):
     import datetime
     timestring = datetime.datetime.fromtimestamp(time.time()).strftime('%d.%m.%Y %H:%M:%S')
-    print "%s: %s" % (timestring, string)
+    print("%s: %s" % (timestring, string))
     sys.stdout.flush()
 
 def get_database_name():
@@ -36,15 +36,15 @@ def check_params(args, required=[], optional={}):
     ok = True
     for param in required:
         if not hasattr(args, param):
-            print "Missing request generator parameter: %s" % param
+            print("Missing request generator parameter: %s" % param)
             ok = False
     for param, (typ, default) in optional.items():
         if hasattr(args, param):
             value = getattr(args, param)
             try:
                 typevalue = typ(value)
-            except Exception, e:
-                print "Failed to convert request generator parameter %s to type %s" % (param, t)
+            except Exception as e:
+                print("Failed to convert request generator parameter %s to type %s: %s" % (param, typ, e))
                 ok = False
         else:
             setattr(args, param, default)
@@ -71,7 +71,7 @@ def main(argv):
         for param in args.params:
             components = param.split('=')
             if len(components) != 2:
-                print "Illegal key=value parameter: %s" % param
+                print("Illegal key=value parameter: %s" % param)
                 return 1
             key, value = components
             setattr(args, key, value)
@@ -79,7 +79,7 @@ def main(argv):
     # ======== Prepare the database
     database_name = args.db or get_database_name()
     if os.path.exists(database_name):
-        print "Database file %s already exists." % database_name
+        print("Database file %s already exists." % database_name)
         return 1
     args.db = database_name
 
@@ -88,15 +88,15 @@ def main(argv):
     try:
         components = args.klass.split('.')
         if len(components) < 2:
-            print "Request generator class not fully qualified class name: %s" % args.klass
+            print("Request generator class not fully qualified class name: %s" % args.klass)
             return 1
         classname = components[-1]
         mod = __import__(reduce(operator.concat, components[:-1]), fromlist=[classname])
         klass = getattr(mod, classname)
         l = klass(args)
-    except Exception, e:
-        print "Error importing class %s" % args.klass
-        print e
+    except Exception as e:
+        print("Error importing class %s" % args.klass)
+        print(e)
         import traceback
         traceback.print_exc()
         return 1
@@ -163,11 +163,11 @@ class DatabaseConnection(object):
             log("Error during %s: %s" % (self.description, value))
         try:
             self.connection.commit()
-        except Exception, e:
+        except Exception as e:
             log("Error during commit (of %s): %s" % (self.description, e))
         try:
             self.connection.close()
-        except Exception, e:
+        except Exception as e:
             log("Error while closing connection (of %s): %s" % (self.description, e))
         if self.fatal and value:
             log("Fatal error, exiting.")

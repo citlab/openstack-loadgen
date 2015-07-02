@@ -37,7 +37,7 @@ class OpenstackRequestGenerator(loadgen.LoadGenerator):
             start = time.time()
             self.execute_client_request(self.api)
             request_time = time.time() - start
-        except Exception, e:
+        except Exception as e:
             error  = "Exception: %s" % e
             log(error)
         finally:
