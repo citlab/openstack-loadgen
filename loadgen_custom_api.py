@@ -8,7 +8,7 @@ def check_args(args):
     from loadgen import check_params
     check_params(args,
         [ 'service', 'host', 'user', 'password', 'tenant' ],
-        { 'fix_host': (str, ""), 'timeout': (int, 5) })
+        { 'fix_host': (str, ""), 'timeout': (float, 5) })
 
 class OpenstackRequestGenerator(loadgen.LoadGenerator):
     def __init__(self, args):

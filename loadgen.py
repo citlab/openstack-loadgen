@@ -44,7 +44,7 @@ def check_params(args, required=[], optional={}):
             try:
                 typevalue = typ(value)
             except Exception as e:
-                print("Failed to convert request generator parameter %s to type %s: %s" % (param, typ, e))
+                print("Failed to convert request generator parameter %s to %s: %s" % (param, typ, e))
                 ok = False
         else:
             setattr(args, param, default)
