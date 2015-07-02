@@ -8,7 +8,7 @@ def check_args(args):
     from loadgen import check_params
     check_params(args,
         [ 'service', 'host', 'user', 'password', 'tenant' ],
-        { 'fix_host': (str, ""), 'timeout': (float, 5) })
+        { 'fix_host': (str, ""), 'http_timeout': (float, 5) })
 
 class OpenstackRequestGenerator(loadgen.LoadGenerator):
     def __init__(self, args):
@@ -27,7 +27,7 @@ class OpenstackRequestGenerator(loadgen.LoadGenerator):
         overwrite_host = self.args.fix_host if self.args.fix_host else None
         s.authenticate(self.args.tenant, self.args.user, self.args.password, overwrite_host=overwrite_host)
         a = s.get_api(self.args.service)
-        a.timeout = self.args.timeout
+        a.timeout = self.args.http_timeout
         return s, a
 
     def execute_request(self):
