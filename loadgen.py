@@ -43,6 +43,7 @@ def check_params(args, required=[], optional={}):
             value = getattr(args, param)
             try:
                 typevalue = typ(value)
+                setattr(args, param, typevalue)
             except Exception as e:
                 print("Failed to convert request generator parameter %s to %s: %s" % (param, typ, e))
                 ok = False
@@ -116,6 +117,7 @@ def main(argv):
         l.create_execution_worker()
     starttime = time.time()
     for thread in l.threads:
+        thread.daemon = True
         thread.start()
 
     # ======== Set up termination
