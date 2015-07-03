@@ -1,10 +1,11 @@
 
 update minsecond set offset = second-(select min(second) from minsecond);
 
-update SOURCETABLE_RICH set
-    second = second+(select min(offset) from minsecond B where B.system = SOURCETABLE_RICH.system),
-    start = start+(select min(offset) from minsecond B where B.system = SOURCETABLE_RICH.system),
-    end = end+(select min(offset) from minsecond B where B.system = SOURCETABLE_RICH.system);
+update requests set
+    second = second+(select min(offset) from minsecond B where B.system = requests.system),
+    start = start+(select min(offset) from minsecond B where B.system = requests.system),
+    end = end+(select min(offset) from minsecond B where B.system = requests.system);
+
 update active_requests set
     second = second+(select min(offset) from minsecond B where B.system = active_requests.system),
     start = start+(select min(offset) from minsecond B where B.system = active_requests.system),

@@ -6,10 +6,11 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 def main(argv):
-    if len(argv) != 1:
-        print "Need 1 parameter: sqlite3 database file"
+    if len(argv) not in [1, 2]:
+        print "Parameters: <sqlite3 database file> [--no-plot]"
         sys.exit(1)
     db_file = argv[0]
+    plot = len(argv) != 2 or argv[1] != '--no-plot'
     conn = sqlite3.connect(db_file)
     try:
         c = conn.cursor()
@@ -41,10 +42,11 @@ def main(argv):
             rows = read_table(table)
             duration = rows[:,0]
             data = rows[:,1]
-            print "Total test run duration: ", max(duration) - min(duration)
-            print "Avg time: ", np.average(data)
-            plt.plot(duration, data)
-            plt.show()
+            print "Total time: ", max(duration) - min(duration)
+            print "Avg  value: ", np.average(data)
+            if plot:
+                plt.plot(duration, data)
+                plt.show()
     finally:
         conn.close()
 
